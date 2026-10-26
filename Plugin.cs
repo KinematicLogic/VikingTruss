@@ -28,6 +28,7 @@ namespace VikingTruss
         public static ConfigEntry<float> LiveLoadCheckInterval;
         public static ConfigEntry<float> CreatureMassMultiplier;
         public static ConfigEntry<bool> PlayerLoadDamagesBeforeDestroy;
+        public static ConfigEntry<bool> NeverDestroyOnFirstFriendlyCrossing;
         public static ConfigEntry<bool> HostileLoadDestroysImmediately;
         public static ConfigEntry<float> PostFractureGraceSeconds;
         public static ConfigEntry<bool> EnableStressSounds;
@@ -119,7 +120,13 @@ namespace VikingTruss
                 "2. Live Loads",
                 "PlayerLoadDamagesBeforeDestroy",
                 true,
-                "If enabled, player-influenced overloads (Players, Carts, Tamed creatures) fracture healthy pieces into their damaged state (20% HP) first, and only destroy pieces that are already damaged.");
+                "If enabled, player-influenced overloads (Players, Carts, Tamed creatures) apply support-scaled structural damage (30% to 100% HP based on overload severity) rather than immediately destroying healthy pieces.");
+
+            NeverDestroyOnFirstFriendlyCrossing = Config.Bind(
+                "2. Live Loads",
+                "NeverDestroyOnFirstFriendlyCrossing",
+                true,
+                "If enabled, friendly/player-influenced overloads can only destroy a piece if it was already in the damaged visual state (<26% HP) prior to the load being added. Even severe overloads on healthy or worn pieces will clamp at the damaged state (20% HP) for that crossing.");
 
             HostileLoadDestroysImmediately = Config.Bind(
                 "2. Live Loads",
@@ -131,7 +138,7 @@ namespace VikingTruss
                 "2. Live Loads",
                 "PostFractureGraceSeconds",
                 25.0f,
-                "Grace period in seconds after a healthy piece fractures into its damaged state before continued player/cart overload destroys it.");
+                "Grace period in seconds after a friendly overload damages a piece before subsequent crossing loads can damage or destroy it.");
 
             EnableStressSounds = Config.Bind(
                 "3. Stress Feedback (Audio & Visual)",

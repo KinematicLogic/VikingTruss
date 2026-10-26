@@ -31,9 +31,12 @@ Instead of punishing diagonal bracing and triangulated trusses with extra node-h
   - **Carts (`Vagon`):** Cart chassis mass + container cargo weight.
   - **Creatures:** Scaled to realistic structural weights (e.g., **Trolls `950 kg`**, **Lox `800 kg`**, **Stone Golems / Abominations `1,100 kg`**, **Fuling Berserkers `550 kg`**).
 - **Deck-to-Beam Load Transfer:** Standing or rolling a heavy cart across `wood_floor` tiles automatically transfers load into the supporting `wood_beam` chords directly underneath.
-- **Two-Stage Fracture for Player Loads (`PlayerLoadDamagesBeforeDestroy = true`):**
-  - When a player-influenced overload (Player + inventory, Cart + cargo, or tamed creature such as a tamed Lox) exceeds a span's capacity (`EffectiveSupport < MinSupport`), **healthy pieces fracture into Valheim's damaged (`20%` HP) state** instead of collapsing immediately, granting a **`25-second` grace window** (`PostFractureGraceSeconds = 25`) so you can finish hauling your heavy cart across the bridge and repair the fractured timbers with a Hammer.
-  - Taking another heavy load across an **already-damaged** span after the grace window destroys the fractured pieces!
+- **Support-Scaled Overload Damage (`PlayerLoadDamagesBeforeDestroy = true`):**
+  - When a player-influenced overload (Player + inventory, Cart + cargo, or tamed creature such as a tamed Lox) exceeds a span's capacity (`EffectiveSupport < MinSupport`), the piece takes **structural damage (`30%–100%` HP) scaled by how far below `MinSupport` it was pushed**:
+    - **Well-Supported Spans (Light Overload):** Take **`30%–45%` damage** per crossing (`100% New` $\rightarrow$ `60% Worn` $\rightarrow$ `20% Damaged` $\rightarrow$ `Destroyed`), surviving multiple crossings before reaching critical fracture.
+    - **Weakly-Supported Spans (Heavy Overload):** Take **`75%+` damage** immediately (`100% New` $\rightarrow$ `20% Damaged`), with a **`25-second` grace window** (`PostFractureGraceSeconds = 25`) so you can finish hauling your cart across and repair with a Hammer.
+- **First-Crossing Protection (`NeverDestroyOnFirstFriendlyCrossing = true`):**
+  - Guarantees that friendly overloads **only destroy a piece if it was already visibly in its `'damaged'` (`<26%` HP, `m_broken`) state prior to the load being added**. Even a massive overload on a healthy or rain-worn piece clamps at `20%` HP (`m_broken`) for that crossing so you always get a visible damaged warning before collapse.
 - **Hostile Instant-Collapse (`HostileLoadDestroysImmediately = true`):**
   - Untamed enemies (Trolls, Stone Golems, Abominations, Fuling Berserkers) bypass the fracture stage and **immediately collapse** under-built spans (**"Troll-Trap" mechanics**).
 
@@ -77,9 +80,10 @@ All settings can be adjusted in `BepInEx/config/com.kinematiclogic.vikingtruss.c
   - `LiveLoadSensitivity` *(default: `0.04`)* — Support penalty per `kg` of excess live load mass.
   - `LiveLoadCheckInterval` *(default: `0.25`)* — Seconds between live-load evaluations.
   - `CreatureMassMultiplier` *(default: `1.0`)* — Multiplier for non-player creature structural mass.
-  - `PlayerLoadDamagesBeforeDestroy` *(default: `true`)* — Player-influenced overloads (players, carts, tamed creatures) fracture healthy pieces into their damaged (`20%` HP) state instead of destroying them immediately. Already-damaged pieces collapse after `PostFractureGraceSeconds`.
+  - `PlayerLoadDamagesBeforeDestroy` *(default: `true`)* — Player-influenced overloads (players, carts, tamed creatures) apply support-scaled structural damage (`30%–100%` HP based on overload severity) rather than immediately destroying healthy pieces.
+  - `NeverDestroyOnFirstFriendlyCrossing` *(default: `true`)* — Friendly overloads only destroy a piece if it was already indicating `'damaged'` (`<26%` HP) prior to the load being added; healthy or worn pieces clamp at `20%` HP (`m_broken`) for that crossing.
   - `HostileLoadDestroysImmediately` *(default: `true`)* — Untamed hostile creatures (Trolls, Golems, Abominations, etc.) bypass the fracture stage and immediately collapse overloaded spans.
-  - `PostFractureGraceSeconds` *(default: `25.0`)* — Grace period in seconds after a player-influenced overload fractures a piece before that newly damaged piece can collapse under continued or repeated player load.
+  - `PostFractureGraceSeconds` *(default: `25.0`)* — Grace period in seconds after a friendly overload damages a piece before subsequent crossing loads can damage or destroy it.
 - **`[3. Stress Feedback (Audio & Visual)]`**
   - `EnableStressSounds` *(default: `true`)* — Enables 75% creaking and 90% cracking sound effects.
   - `EnableStressVisualHighlight` *(default: `true`)* — Automatically highlights pieces under active live load at $\ge 75\%$ (orange) and $\ge 90\%$ (red) capacity without requiring the Hammer.

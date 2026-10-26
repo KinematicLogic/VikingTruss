@@ -65,6 +65,10 @@ namespace VikingTruss.Components
         private float _visualHighlightExpireTime = -999f;
         private float _nextAcousticTime;
         private float _fractureGraceUntilTime = -999f;
+        private float _preLoadHealthPct = 1.0f;
+        private float _crossingPeakDamageFraction;
+        private float _lastAppliedHealthPct = 1.0f;
+        private bool _crossingStarted;
         private float _lastNotifiedCapacity;
         private bool _initializedBaselineSupport;
         private bool _hasDestroyed;
@@ -428,6 +432,13 @@ namespace VikingTruss.Components
                 }
             }
 
+            if (totalMass < 20f && now >= _fractureGraceUntilTime)
+            {
+                _crossingStarted = false;
+                _crossingPeakDamageFraction = 0f;
+                _preLoadHealthPct = _wearNTear.GetHealthPercentage();
+            }
+
             _previousTotalMass = totalMass;
             _wasMovingLastCheck = hasMovingLoad;
 
@@ -447,35 +458,77 @@ namespace VikingTruss.Components
 
                 if (damageFirstEnabled)
                 {
-                    float healthPct = _wearNTear.GetHealthPercentage();
+                    float currentHealthPct = _wearNTear.GetHealthPercentage();
 
-                    // Valheim's damaged (m_broken) visual state activates at <= 25% health (0.25f).
-                    // If the piece is currently above 26% health, transition it to the damaged state (20% HP)
-                    // and start the post-fracture grace period so the player can cross and repair it.
-                    if (healthPct > 0.26f)
+                    // Detect if the player repaired the piece with a Hammer since the last fracture
+                    if (currentHealthPct > _lastAppliedHealthPct + 0.05f && currentHealthPct > 0.90f)
                     {
-                        float graceSeconds = Mathf.Max(1.0f, Plugin.PostFractureGraceSeconds?.Value ?? 25.0f);
-                        _fractureGraceUntilTime = now + graceSeconds;
-
-                        TriggerPieceFractureDamage(_wearNTear, nview);
-
-                        Plugin.Log?.LogInfo(
-                            $"[VikingTruss] Live load fractured '{_wearNTear.gameObject.name}' to damaged state (20% HP, grace={graceSeconds:F0}s): " +
-                            $"BaseSupport={baseSupport:F1}, LiveLoadMass={totalMass:F1}kg, EffectiveSupport={EffectiveSupport:F1} < MinSupport={minSupport:F1}");
-                        return;
+                        _preLoadHealthPct = currentHealthPct;
+                        _crossingPeakDamageFraction = 0f;
+                        _fractureGraceUntilTime = -999f;
+                        _crossingStarted = false;
                     }
 
-                    // Piece is already in the damaged state (<= 25% HP). Hold during the initial fracture grace window,
-                    // then collapse if still overloaded (or overloaded again without being repaired).
-                    if (now < _fractureGraceUntilTime)
+                    float graceSeconds = Mathf.Max(1.0f, Plugin.PostFractureGraceSeconds?.Value ?? 25.0f);
+                    if (!_crossingStarted || now >= _fractureGraceUntilTime)
                     {
+                        _crossingStarted = true;
+                        _preLoadHealthPct = currentHealthPct;
+                        _crossingPeakDamageFraction = 0f;
+                        _fractureGraceUntilTime = now + graceSeconds;
+                    }
+
+                    // Only if the piece was NOT already indicating 'damaged' (< 0.26 HP) prior to this crossing load
+                    // do we apply progressive support-scaled damage instead of destroying it.
+                    if (_preLoadHealthPct > 0.26f)
+                    {
+                        // Scale structural damage (30% to 100% of max health) based on how far EffectiveSupport
+                        // drops below MinSupport. Well-supported spans take ~30-45% damage (New -> Worn -> Damaged),
+                        // while heavily overloaded weak spans take 75-100% damage (jumping straight to Damaged).
+                        float overloadRatio = (minSupport - EffectiveSupport) / Mathf.Max(1f, minSupport);
+                        float damageFraction = Mathf.Clamp(0.30f + (0.65f * overloadRatio), 0.30f, 1.00f);
+
+                        if (damageFraction > _crossingPeakDamageFraction + 0.03f)
+                        {
+                            _crossingPeakDamageFraction = damageFraction;
+                            float targetHealthPct = _preLoadHealthPct - _crossingPeakDamageFraction;
+                            bool neverDestroyFirstCrossing = Plugin.NeverDestroyOnFirstFriendlyCrossing?.Value ?? true;
+
+                            if (!neverDestroyFirstCrossing && targetHealthPct <= 0.05f)
+                            {
+                                // Player allowed first-crossing destruction and the scaled damage exceeded 95-100% HP
+                                _hasDestroyed = true;
+                                Plugin.Log?.LogInfo(
+                                    $"[VikingTruss] Severe overload destroyed '{_wearNTear.gameObject.name}' on crossing " +
+                                    $"(PreLoadHP={_preLoadHealthPct * 100f:F0}%, Damage={damageFraction * 100f:F0}%, OverloadRatio={overloadRatio:F2}): " +
+                                    $"BaseSupport={baseSupport:F1}, LiveLoadMass={totalMass:F1}kg, EffectiveSupport={EffectiveSupport:F1} < MinSupport={minSupport:F1}");
+                                TriggerPieceDestroy(_wearNTear);
+                                return;
+                            }
+
+                            // Clamp into Valheim's damaged (m_broken, <= 25% HP) state if damage pushes below 25%
+                            if (targetHealthPct <= 0.25f)
+                            {
+                                targetHealthPct = 0.20f;
+                            }
+
+                            _lastAppliedHealthPct = targetHealthPct;
+                            _fractureGraceUntilTime = now + graceSeconds;
+                            TriggerPieceFractureDamage(_wearNTear, nview, targetHealthPct);
+
+                            Plugin.Log?.LogInfo(
+                                $"[VikingTruss] Live load damaged '{_wearNTear.gameObject.name}' " +
+                                $"({_preLoadHealthPct * 100f:F0}% -> {targetHealthPct * 100f:F0}% HP, Damage={damageFraction * 100f:F0}%, grace={graceSeconds:F0}s): " +
+                                $"BaseSupport={baseSupport:F1}, LiveLoadMass={totalMass:F1}kg, EffectiveSupport={EffectiveSupport:F1} < MinSupport={minSupport:F1}");
+                        }
+
                         return;
                     }
                 }
 
                 _hasDestroyed = true;
                 Plugin.Log?.LogInfo(
-                    $"[VikingTruss] Live load collapse on '{_wearNTear.gameObject.name}' (Hostile={hasHostileLoad}): " +
+                    $"[VikingTruss] Live load collapse on '{_wearNTear.gameObject.name}' (Hostile={hasHostileLoad}, PreLoadHP={_preLoadHealthPct * 100f:F0}%): " +
                     $"BaseSupport={baseSupport:F1}, LiveLoadMass={totalMass:F1}kg (Threshold={threshold:F0}kg), " +
                     $"EffectiveSupport={EffectiveSupport:F1} < MinSupport={minSupport:F1}");
 
@@ -839,18 +892,18 @@ namespace VikingTruss.Components
         }
 
         /// <summary>
-        /// Fractures a healthy piece into Valheim's damaged (<c>m_broken</c>, 20% health) state,
-        /// syncing the reduced health to the ZDO and broadcasting <c>RPC_HealthChanged</c> so the piece
-        /// displays its damaged model and can be repaired with the Hammer.
+        /// Applies support-scaled overload damage to a piece, syncing the reduced health to the ZDO and
+        /// broadcasting <c>RPC_HealthChanged</c> so the piece transitions to its worn (<c>m_worn</c>, 25-75%)
+        /// or damaged (<c>m_broken</c>, &lt;=25%) visual model and can be repaired with the Hammer.
         /// </summary>
-        private static void TriggerPieceFractureDamage(WearNTear piece, ZNetView nview)
+        private static void TriggerPieceFractureDamage(WearNTear piece, ZNetView nview, float targetHealthPct)
         {
             if (piece == null || nview == null || !nview.IsValid())
             {
                 return;
             }
 
-            float damagedHealth = Mathf.Max(1f, piece.m_health * 0.20f);
+            float damagedHealth = Mathf.Max(1f, piece.m_health * Mathf.Clamp(targetHealthPct, 0.05f, 1.0f));
             ZDO zdo = nview.GetZDO();
             if (zdo != null)
             {
