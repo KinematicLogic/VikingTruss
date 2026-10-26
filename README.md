@@ -25,20 +25,24 @@ Instead of punishing diagonal bracing and triangulated trusses with extra node-h
 - All members in a closed structural triangle receive a **`50%` support loss reduction** (`TrussTriangleMultiplier = 0.50`).
 - Strictly rejects unbraced 4-corner rectangles/boxes and multiple beams stacked at a single corner.
 
-### 3. Dynamic Live Loads ("Troll-Trap" Mechanics)
+### 3. Dynamic Live Loads: Two-Stage Player Fracture & "Troll-Trap" Collapse
 - Non-grounded horizontal spans dynamically track the weight of entities resting on or crossing them:
   - **Players:** `100 kg` base body mass + current inventory weight (`m_inventory.GetTotalWeight()`).
   - **Carts (`Vagon`):** Cart chassis mass + container cargo weight.
   - **Creatures:** Scaled to realistic structural weights (e.g., **Trolls `950 kg`**, **Lox `800 kg`**, **Stone Golems / Abominations `1,100 kg`**, **Fuling Berserkers `550 kg`**).
 - **Deck-to-Beam Load Transfer:** Standing or rolling a heavy cart across `wood_floor` tiles automatically transfers load into the supporting `wood_beam` chords directly underneath.
-- When cumulative live load exceeds `LiveLoadMassThreshold` (`350 kg` default), excess weight penalizes support (`EffectiveSupport = BaseSupport - (ExcessMass * 0.04)`). If `EffectiveSupport < MinSupport`, the over-stressed span collapses!
+- **Two-Stage Fracture for Player Loads (`PlayerLoadDamagesBeforeDestroy = true`):**
+  - When a player-influenced overload (Player + inventory, Cart + cargo, or tamed creature such as a tamed Lox) exceeds a span's capacity (`EffectiveSupport < MinSupport`), **healthy pieces fracture into Valheim's damaged (`20%` HP) state** instead of collapsing immediately, granting a **`25-second` grace window** (`PostFractureGraceSeconds = 25`) so you can finish hauling your heavy cart across the bridge and repair the fractured timbers with a Hammer.
+  - Taking another heavy load across an **already-damaged** span after the grace window destroys the fractured pieces!
+- **Hostile Instant-Collapse (`HostileLoadDestroysImmediately = true`):**
+  - Untamed enemies (Trolls, Stone Golems, Abominations, Fuling Berserkers) bypass the fracture stage and **immediately collapse** under-built spans (**"Troll-Trap" mechanics**).
 
 ### 4. Real-Time Audio & Visual Stress Feedback (No Hammer Required)
 - **75%–89% Capacity (Creak Zone):**
   - Emits 3D spatial **timber/material creaks and groans** using Valheim's built-in studio audio clips.
   - Automatically highlights the stressed piece in **warm yellow-orange** under your feet (even without the Hammer equipped).
 - **90%–99% Capacity (Snap / Crack Zone):**
-  - Emits sharp **wood/material fracture cracks**, spawns a subtle burst of **sawdust/splinter particles**, and highlights the piece in **bright red** to warn of imminent collapse.
+  - Emits sharp **wood/material fracture cracks**, spawns a subtle burst of **sawdust/splinter particles**, and highlights the piece in **bright red** to warn of imminent fracture or collapse.
 
 ---
 
@@ -46,7 +50,7 @@ Instead of punishing diagonal bracing and triangulated trusses with extra node-h
 
 *(Note: In Valheim, your character's body mass is `100 kg`, so `Total Mass = 100 kg + Inventory Weight`.)*
 
-| Bridge Section & Hammer Color | Unloaded `BaseSupport` | **75% Creak + Orange Glow** | **90% Crack + Red Glow** | **100% Collapse** |
+| Bridge Section & Hammer Color | Unloaded `BaseSupport` | **75% Creak + Orange Glow** | **90% Crack + Red Glow** | **100% Fracture / Collapse** |
 | :--- | :---: | :--- | :--- | :--- |
 | **Grounded** *(Blue)* | `100` | Never *(Grounded)* | Never *(Grounded)* | Never *(Grounded)* |
 | **Near Pier** *(Green)* | `68` | **1,350 kg** *(Loaded Cart)* | **1,568 kg** *(Heavy Ore Cart)* | **1,800 kg** *(Full Ore Cart)* |
@@ -68,15 +72,18 @@ All settings can be adjusted in `BepInEx/config/com.kinematiclogic.vikingtruss.c
   - `StrutLossMultiplier` *(default: `0.45`)* — Horizontal loss multiplier for angled beams ($20^\circ\text{–}65^\circ$).
   - `TrussTriangleMultiplier` *(default: `0.50`)* — Support loss multiplier for closed 3-piece and 4-piece structural triangles.
 - **`[2. Live Loads]`**
-  - `EnableLiveLoads` *(default: `true`)* — Enables dynamic entity weight collapse penalties.
+  - `EnableLiveLoads` *(default: `true`)* — Enables dynamic entity weight fracture and collapse penalties.
   - `LiveLoadMassThreshold` *(default: `350`)* — Minimum cumulative live load mass (`kg`) before support is penalized.
   - `LiveLoadSensitivity` *(default: `0.04`)* — Support penalty per `kg` of excess live load mass.
   - `LiveLoadCheckInterval` *(default: `0.25`)* — Seconds between live-load evaluations.
   - `CreatureMassMultiplier` *(default: `1.0`)* — Multiplier for non-player creature structural mass.
+  - `PlayerLoadDamagesBeforeDestroy` *(default: `true`)* — Player-influenced overloads (players, carts, tamed creatures) fracture healthy pieces into their damaged (`20%` HP) state instead of destroying them immediately. Already-damaged pieces collapse after `PostFractureGraceSeconds`.
+  - `HostileLoadDestroysImmediately` *(default: `true`)* — Untamed hostile creatures (Trolls, Golems, Abominations, etc.) bypass the fracture stage and immediately collapse overloaded spans.
+  - `PostFractureGraceSeconds` *(default: `25.0`)* — Grace period in seconds after a player-influenced overload fractures a piece before that newly damaged piece can collapse under continued or repeated player load.
 - **`[3. Stress Feedback (Audio & Visual)]`**
   - `EnableStressSounds` *(default: `true`)* — Enables 75% creaking and 90% cracking sound effects.
   - `EnableStressVisualHighlight` *(default: `true`)* — Automatically highlights pieces under active live load at $\ge 75\%$ (orange) and $\ge 90\%$ (red) capacity without requiring the Hammer.
-  - `StressHighlightIntensity` *(default: `0.50`)* — Visual intensity (`0.1–1.0`) of the automatic live-load stress highlight (`0.50` = half as obvious as the Hammer hover highlight).
+  - `StressHighlightIntensity` *(default: `0.45`)* — Visual intensity (`0.05–1.0`) of the automatic live-load stress highlight (`0.45` = ~45% of the vanilla Hammer highlight glow).
   - `CreakCapacityThreshold` *(default: `0.75`)* — Capacity ratio (`0.0–1.0`) where pieces begin to creak and glow orange.
   - `SnapCapacityThreshold` *(default: `0.90`)* — Capacity ratio (`0.0–1.0`) where pieces crack, shed splinters, and glow red.
   - `StressSoundVolume` *(default: `0.85`)* — Master volume scale (`0.05–2.0`) for stress audio.

@@ -27,6 +27,9 @@ namespace VikingTruss
         public static ConfigEntry<float> LiveLoadSensitivity;
         public static ConfigEntry<float> LiveLoadCheckInterval;
         public static ConfigEntry<float> CreatureMassMultiplier;
+        public static ConfigEntry<bool> PlayerLoadDamagesBeforeDestroy;
+        public static ConfigEntry<bool> HostileLoadDestroysImmediately;
+        public static ConfigEntry<float> PostFractureGraceSeconds;
         public static ConfigEntry<bool> EnableStressSounds;
         public static ConfigEntry<bool> EnableStressVisualHighlight;
         public static ConfigEntry<float> StressHighlightIntensity;
@@ -111,6 +114,24 @@ namespace VikingTruss
                 "CreatureMassMultiplier",
                 1.0f,
                 "Multiplier applied to non-player creature live-load mass (Trolls, Lox, Golems, etc.).");
+
+            PlayerLoadDamagesBeforeDestroy = Config.Bind(
+                "2. Live Loads",
+                "PlayerLoadDamagesBeforeDestroy",
+                true,
+                "If enabled, player-influenced overloads (Players, Carts, Tamed creatures) fracture healthy pieces into their damaged state (20% HP) first, and only destroy pieces that are already damaged.");
+
+            HostileLoadDestroysImmediately = Config.Bind(
+                "2. Live Loads",
+                "HostileLoadDestroysImmediately",
+                true,
+                "If enabled, untamed hostile creatures (Trolls, Stone Golems, etc.) bypass the fracture stage and immediately destroy overloaded spans.");
+
+            PostFractureGraceSeconds = Config.Bind(
+                "2. Live Loads",
+                "PostFractureGraceSeconds",
+                25.0f,
+                "Grace period in seconds after a healthy piece fractures into its damaged state before continued player/cart overload destroys it.");
 
             EnableStressSounds = Config.Bind(
                 "3. Stress Feedback (Audio & Visual)",

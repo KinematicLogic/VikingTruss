@@ -40,6 +40,11 @@ namespace VikingTruss.Components
         private static readonly MethodInfo DestroyMethod =
             AccessTools.Method(typeof(WearNTear), "Destroy");
 
+        private static readonly MethodInfo UpdateVisualMethod =
+            AccessTools.Method(typeof(WearNTear), "UpdateVisual");
+
+        private static readonly int HealthZdoHash = "health".GetStableHashCode();
+
         private static int _liveLoadLayerMask;
 
         private readonly HashSet<int> _visitedEntities = new HashSet<int>();
@@ -49,14 +54,17 @@ namespace VikingTruss.Components
         private float _nextCheckTime;
         private float _collisionMassAccumulator;
         private bool _collisionHasMovement;
+        private bool _collisionHasHostile;
         private float _transferredMassAccumulator;
         private bool _transferredHasMovement;
+        private bool _transferredHasHostile;
         private float _transferredMassTimestamp = -999f;
         private float _previousTotalMass;
         private bool _wasMovingLastCheck;
         private float _visualHighlightSupportOverride = -1f;
         private float _visualHighlightExpireTime = -999f;
         private float _nextAcousticTime;
+        private float _fractureGraceUntilTime = -999f;
         private float _lastNotifiedCapacity;
         private bool _initializedBaselineSupport;
         private bool _hasDestroyed;
@@ -126,7 +134,7 @@ namespace VikingTruss.Components
         /// <summary>
         /// Receives live load transferred downward from a deck/floor piece resting on this beam/support.
         /// </summary>
-        public void AddTransferredLiveLoad(float mass, bool isMoving, float now)
+        public void AddTransferredLiveLoad(float mass, bool isMoving, bool isHostile, float now)
         {
             if (mass <= 0f || _hasDestroyed)
             {
@@ -139,6 +147,7 @@ namespace VikingTruss.Components
             {
                 _transferredMassAccumulator = 0f;
                 _transferredHasMovement = false;
+                _transferredHasHostile = false;
             }
 
             _transferredMassTimestamp = now;
@@ -146,6 +155,10 @@ namespace VikingTruss.Components
             if (isMoving)
             {
                 _transferredHasMovement = true;
+            }
+            if (isHostile)
+            {
+                _transferredHasHostile = true;
             }
         }
 
@@ -232,13 +245,17 @@ namespace VikingTruss.Components
                 return;
             }
 
-            float entityMass = ExtractEntityMassFromCollider(collision.collider, out int rootId, out bool isMoving);
+            float entityMass = ExtractEntityMassFromCollider(collision.collider, out int rootId, out bool isMoving, out bool isHostile);
             if (entityMass > 0f && rootId != 0 && _visitedEntities.Add(rootId))
             {
                 _collisionMassAccumulator += entityMass;
                 if (isMoving)
                 {
                     _collisionHasMovement = true;
+                }
+                if (isHostile)
+                {
+                    _collisionHasHostile = true;
                 }
             }
         }
@@ -250,6 +267,7 @@ namespace VikingTruss.Components
                 _visitedEntities.Clear();
                 _collisionMassAccumulator = 0f;
                 _collisionHasMovement = false;
+                _collisionHasHostile = false;
                 return;
             }
 
@@ -259,6 +277,7 @@ namespace VikingTruss.Components
                 _visitedEntities.Clear();
                 _collisionMassAccumulator = 0f;
                 _collisionHasMovement = false;
+                _collisionHasHostile = false;
                 return;
             }
 
@@ -270,6 +289,7 @@ namespace VikingTruss.Components
             _visitedEntities.Clear();
             _collisionMassAccumulator = 0f;
             _collisionHasMovement = false;
+            _collisionHasHostile = false;
         }
 
         private void EvaluateLiveLoadAndCollapse(float now, float interval)
@@ -310,21 +330,24 @@ namespace VikingTruss.Components
                 return;
             }
 
-            float overlapMass = SampleOverlapLiveLoadMass(out bool overlapMoving);
+            float overlapMass = SampleOverlapLiveLoadMass(out bool overlapMoving, out bool overlapHostile);
             float directMass = _collisionMassAccumulator + overlapMass;
             bool directMoving = _collisionHasMovement || overlapMoving;
+            bool directHostile = _collisionHasHostile || overlapHostile;
 
             if (directMass > 0f)
             {
-                PropagateDirectLoadToSupportingNeighbors(directMass, directMoving, now);
+                PropagateDirectLoadToSupportingNeighbors(directMass, directMoving, directHostile, now);
             }
 
             bool hasActiveTransfer = (now - _transferredMassTimestamp <= interval * 1.8f);
             float transferredMass = hasActiveTransfer ? _transferredMassAccumulator : 0f;
             bool transferredMoving = hasActiveTransfer && _transferredHasMovement;
+            bool transferredHostile = hasActiveTransfer && _transferredHasHostile;
 
             float totalMass = Mathf.Max(directMass, transferredMass);
             bool hasMovingLoad = directMoving || transferredMoving;
+            bool hasHostileLoad = directHostile || transferredHostile;
             bool loadJustIncreased = (_previousTotalMass < 20f && totalMass >= 20f) || (totalMass > _previousTotalMass + 35f);
 
             CurrentLiveLoadMass = totalMass;
@@ -408,7 +431,7 @@ namespace VikingTruss.Components
             _previousTotalMass = totalMass;
             _wasMovingLastCheck = hasMovingLoad;
 
-            // Only the ZDO owner may trigger actual structural collapse, and only after placement grace period
+            // Only the ZDO owner may trigger structural fracture or collapse, and only after placement grace period
             if (!(Plugin.EnableLiveLoads?.Value ?? true) ||
                 !nview.IsOwner() ||
                 (now - _spawnTime) < PlacementGracePeriodSeconds ||
@@ -419,9 +442,40 @@ namespace VikingTruss.Components
 
             if (EffectiveSupport < minSupport)
             {
+                bool instantHostileCollapse = hasHostileLoad && (Plugin.HostileLoadDestroysImmediately?.Value ?? true);
+                bool damageFirstEnabled = (Plugin.PlayerLoadDamagesBeforeDestroy?.Value ?? true) && !instantHostileCollapse;
+
+                if (damageFirstEnabled)
+                {
+                    float healthPct = _wearNTear.GetHealthPercentage();
+
+                    // Valheim's damaged (m_broken) visual state activates at <= 25% health (0.25f).
+                    // If the piece is currently above 26% health, transition it to the damaged state (20% HP)
+                    // and start the post-fracture grace period so the player can cross and repair it.
+                    if (healthPct > 0.26f)
+                    {
+                        float graceSeconds = Mathf.Max(1.0f, Plugin.PostFractureGraceSeconds?.Value ?? 25.0f);
+                        _fractureGraceUntilTime = now + graceSeconds;
+
+                        TriggerPieceFractureDamage(_wearNTear, nview);
+
+                        Plugin.Log?.LogInfo(
+                            $"[VikingTruss] Live load fractured '{_wearNTear.gameObject.name}' to damaged state (20% HP, grace={graceSeconds:F0}s): " +
+                            $"BaseSupport={baseSupport:F1}, LiveLoadMass={totalMass:F1}kg, EffectiveSupport={EffectiveSupport:F1} < MinSupport={minSupport:F1}");
+                        return;
+                    }
+
+                    // Piece is already in the damaged state (<= 25% HP). Hold during the initial fracture grace window,
+                    // then collapse if still overloaded (or overloaded again without being repaired).
+                    if (now < _fractureGraceUntilTime)
+                    {
+                        return;
+                    }
+                }
+
                 _hasDestroyed = true;
                 Plugin.Log?.LogInfo(
-                    $"[VikingTruss] Live load collapse on '{_wearNTear.gameObject.name}': " +
+                    $"[VikingTruss] Live load collapse on '{_wearNTear.gameObject.name}' (Hostile={hasHostileLoad}): " +
                     $"BaseSupport={baseSupport:F1}, LiveLoadMass={totalMass:F1}kg (Threshold={threshold:F0}kg), " +
                     $"EffectiveSupport={EffectiveSupport:F1} < MinSupport={minSupport:F1}");
 
@@ -489,7 +543,7 @@ namespace VikingTruss.Components
         /// <summary>
         /// Transfers live load from a deck/floor piece to the structural beams/supports directly underneath it.
         /// </summary>
-        private void PropagateDirectLoadToSupportingNeighbors(float directMass, bool isMoving, float now)
+        private void PropagateDirectLoadToSupportingNeighbors(float directMass, bool isMoving, bool isHostile, float now)
         {
             TrussNodeCache cache = _wearNTear.GetComponent<TrussNodeCache>();
             if (cache == null)
@@ -532,15 +586,16 @@ namespace VikingTruss.Components
                 float sharedLoad = (directMass * 0.85f) / Mathf.Sqrt(count);
                 for (int i = 0; i < count; i++)
                 {
-                    _supportingSensorsBuffer[i].AddTransferredLiveLoad(sharedLoad, isMoving, now);
+                    _supportingSensorsBuffer[i].AddTransferredLiveLoad(sharedLoad, isMoving, isHostile, now);
                 }
                 _supportingSensorsBuffer.Clear();
             }
         }
 
-        private float SampleOverlapLiveLoadMass(out bool anyMoving)
+        private float SampleOverlapLiveLoadMass(out bool anyMoving, out bool anyHostile)
         {
             anyMoving = false;
+            anyHostile = false;
             Vector3 com = WearNTearPatches.GetPieceCOM(_wearNTear);
             Vector3 probeCenter = com + Vector3.up * 0.45f;
             Vector3 halfExtents = new Vector3(0.95f, 0.45f, 0.95f);
@@ -568,13 +623,17 @@ namespace VikingTruss.Components
                     continue;
                 }
 
-                float mass = ExtractEntityMassFromCollider(col, out int rootId, out bool isMoving);
+                float mass = ExtractEntityMassFromCollider(col, out int rootId, out bool isMoving, out bool isHostile);
                 if (mass > 0f && rootId != 0 && _visitedEntities.Add(rootId))
                 {
                     overlapMass += mass;
                     if (isMoving)
                     {
                         anyMoving = true;
+                    }
+                    if (isHostile)
+                    {
+                        anyHostile = true;
                     }
                 }
             }
@@ -589,11 +648,17 @@ namespace VikingTruss.Components
         ///   <item><description><see cref="Character"/>: <c>m_body.mass</c> scaled for heavy Valheim creatures (Trolls, Lox, Golems, etc.)</description></item>
         ///   <item><description><see cref="Vagon"/>: Base mass + attached container cargo weight (<c>m_container.GetInventory().GetTotalWeight()</c>)</description></item>
         /// </list>
+        /// Also identifies whether the entity is an untamed hostile creature (<paramref name="isHostile"/>) vs. player-influenced.
         /// </summary>
-        public static float ExtractEntityMassFromCollider(Collider col, out int entityInstanceId, out bool isMoving)
+        public static float ExtractEntityMassFromCollider(
+            Collider col,
+            out int entityInstanceId,
+            out bool isMoving,
+            out bool isHostile)
         {
             entityInstanceId = 0;
             isMoving = false;
+            isHostile = false;
             if (col == null)
             {
                 return 0f;
@@ -619,19 +684,24 @@ namespace VikingTruss.Components
 
                 if (character is Player player)
                 {
+                    isHostile = false;
                     Inventory inv = GetPlayerInventory(player);
                     float invWeight = inv != null ? inv.GetTotalWeight() : 0f;
                     return baseMass + invWeight;
                 }
 
+                // Tamed creatures (e.g., tamed Lox, Asksvin, Boar, Wolf) count as player-influenced loads;
+                // untamed creatures (Trolls, Stone Golems, wild Lox, etc.) count as hostile loads.
+                isHostile = !character.IsPlayer() && !character.IsTamed();
                 return GetEffectiveCreatureMass(character, baseMass);
             }
 
-            // 2. Check Vagon (Carts)
+            // 2. Check Vagon (Carts) - always player-influenced
             Vagon vagon = col.GetComponentInParent<Vagon>();
             if (vagon != null)
             {
                 entityInstanceId = vagon.GetInstanceID();
+                isHostile = false;
                 Rigidbody vagonBody = col.attachedRigidbody;
                 if (vagonBody != null)
                 {
@@ -766,6 +836,57 @@ namespace VikingTruss.Components
             }
 
             return _liveLoadLayerMask;
+        }
+
+        /// <summary>
+        /// Fractures a healthy piece into Valheim's damaged (<c>m_broken</c>, 20% health) state,
+        /// syncing the reduced health to the ZDO and broadcasting <c>RPC_HealthChanged</c> so the piece
+        /// displays its damaged model and can be repaired with the Hammer.
+        /// </summary>
+        private static void TriggerPieceFractureDamage(WearNTear piece, ZNetView nview)
+        {
+            if (piece == null || nview == null || !nview.IsValid())
+            {
+                return;
+            }
+
+            float damagedHealth = Mathf.Max(1f, piece.m_health * 0.20f);
+            ZDO zdo = nview.GetZDO();
+            if (zdo != null)
+            {
+                zdo.Set(HealthZdoHash, damagedHealth);
+            }
+
+            try
+            {
+                nview.InvokeRPC(ZNetView.Everybody, "RPC_HealthChanged", damagedHealth);
+            }
+            catch
+            {
+                if (UpdateVisualMethod != null)
+                {
+                    try
+                    {
+                        UpdateVisualMethod.Invoke(piece, new object[] { true });
+                    }
+                    catch
+                    {
+                        // Ignore
+                    }
+                }
+            }
+
+            piece.m_hitEffect?.Create(piece.transform.position, piece.transform.rotation, piece.transform, 1f);
+
+            if (Plugin.EnableStressSounds?.Value ?? true)
+            {
+                StructuralStressAudio.PlayStressFeedback(
+                    piece,
+                    isSnapCrack: true,
+                    capacityRatio: 1.0f,
+                    spawnParticles: true,
+                    volumeMultiplier: 1.15f);
+            }
         }
 
         private static void TriggerPieceDestroy(WearNTear piece)
