@@ -1,0 +1,114 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>VikingTruss</AssemblyName>
+    <RootNamespace>VikingTruss</RootNamespace>
+    <Version>1.0.0</Version>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <RestoreAdditionalProjectSources>
+      https://api.nuget.org/v3/index.json;
+      https://nuget.bepinex.dev/v3/index.json
+    </RestoreAdditionalProjectSources>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <ValheimDir Condition="'$(ValheimDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Valheim</ValheimDir>
+    <ValheimManaged>$(ValheimDir)\valheim_Data\Managed</ValheimManaged>
+    <ModProfileName Condition="'$(ModProfileName)' == ''">Default</ModProfileName>
+    <R2ModmanProfileDir>$(AppData)\r2modmanPlus-local\Valheim\profiles\$(ModProfileName)</R2ModmanProfileDir>
+    <R2ModmanPluginsDir>$(R2ModmanProfileDir)\BepInEx\plugins</R2ModmanPluginsDir>
+    <GaleProfileDir>$(AppData)\com.kesomannen.gale\valheim\profiles\$(ModProfileName)</GaleProfileDir>
+    <GalePluginsDir>$(GaleProfileDir)\BepInEx\plugins</GalePluginsDir>
+    <SteamBepInExPluginsDir>$(ValheimDir)\BepInEx\plugins</SteamBepInExPluginsDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BepInEx.Core" Version="5.4.21" />
+    <PackageReference Include="HarmonyX" Version="2.10.2" />
+    <PackageReference Include="UnityEngine.Modules" Version="2022.3.50" IncludeAssets="compile" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="assembly_valheim" Condition="Exists('$(ValheimManaged)\assembly_valheim.dll')">
+      <HintPath>$(ValheimManaged)\assembly_valheim.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="assembly_utils" Condition="Exists('$(ValheimManaged)\assembly_utils.dll')">
+      <HintPath>$(ValheimManaged)\assembly_utils.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Automatically deploy to r2modman profile when present -->
+  <Target Name="CopyToR2ModmanProfile" AfterTargets="Build" Condition="Exists('$(R2ModmanPluginsDir)')">
+    <MakeDir Directories="$(R2ModmanPluginsDir)\VikingTruss;$(R2ModmanProfileDir)\BepInEx\config" />
+    <Copy SourceFiles="$(TargetPath);$(ProjectDir)manifest.json;$(ProjectDir)README.md;$(ProjectDir)CHANGELOG.md;$(ProjectDir)icon.png"
+          DestinationFolder="$(R2ModmanPluginsDir)\VikingTruss"
+          SkipUnchangedFiles="false" />
+    <Copy SourceFiles="$(ProjectDir)com.kinematiclogic.vikingtruss.cfg"
+          DestinationFolder="$(R2ModmanProfileDir)\BepInEx\config"
+          Condition="Exists('$(ProjectDir)com.kinematiclogic.vikingtruss.cfg')"
+          SkipUnchangedFiles="false" />
+    <Message Text="Copied $(TargetFileName) to r2modman profile: $(R2ModmanPluginsDir)\VikingTruss" Importance="high" />
+  </Target>
+
+  <!-- Automatically deploy to Gale profile when present -->
+  <Target Name="CopyToGaleProfile" AfterTargets="Build" Condition="Exists('$(GalePluginsDir)')">
+    <MakeDir Directories="$(GalePluginsDir)\VikingTruss;$(GaleProfileDir)\BepInEx\config" />
+    <Copy SourceFiles="$(TargetPath);$(ProjectDir)manifest.json;$(ProjectDir)README.md;$(ProjectDir)CHANGELOG.md;$(ProjectDir)icon.png"
+          DestinationFolder="$(GalePluginsDir)\VikingTruss"
+          SkipUnchangedFiles="false" />
+    <Copy SourceFiles="$(TargetPath);$(ProjectDir)icon.png"
+          DestinationFolder="$(GalePluginsDir)\KinematicLogic-VikingTruss"
+          Condition="Exists('$(GalePluginsDir)\KinematicLogic-VikingTruss')"
+          SkipUnchangedFiles="false" />
+    <Copy SourceFiles="$(TargetPath);$(ProjectDir)icon.png"
+          DestinationFolder="$(GalePluginsDir)\Unknown-VikingTruss"
+          Condition="Exists('$(GalePluginsDir)\Unknown-VikingTruss')"
+          SkipUnchangedFiles="false" />
+    <Copy SourceFiles="$(ProjectDir)com.kinematiclogic.vikingtruss.cfg"
+          DestinationFolder="$(GaleProfileDir)\BepInEx\config"
+          Condition="Exists('$(ProjectDir)com.kinematiclogic.vikingtruss.cfg')"
+          SkipUnchangedFiles="false" />
+    <Message Text="Copied $(TargetFileName) to Gale profile: $(GalePluginsDir)\VikingTruss" Importance="high" />
+  </Target>
+
+  <!-- Package a Thunderstore/Gale-ready .zip in the project root for 'Import -> Local mod' or Thunderstore upload -->
+  <Target Name="PackageThunderstoreZip" AfterTargets="Build">
+    <PropertyGroup>
+      <PackageStageDir>$(IntermediateOutputPath)ThunderstorePackage</PackageStageDir>
+      <PackageZipPath>$(ProjectDir)VikingTruss-$(Version).zip</PackageZipPath>
+    </PropertyGroup>
+    <RemoveDir Directories="$(PackageStageDir)" />
+    <MakeDir Directories="$(PackageStageDir);$(PackageStageDir)\docs" />
+    <Copy SourceFiles="$(TargetPath);$(ProjectDir)manifest.json;$(ProjectDir)README.md;$(ProjectDir)CHANGELOG.md;$(ProjectDir)icon.png" DestinationFolder="$(PackageStageDir)" />
+    <Copy SourceFiles="$(ProjectDir)docs\bridge_comparison.jpg;$(ProjectDir)docs\stress_highlight.jpg"
+          DestinationFolder="$(PackageStageDir)\docs"
+          Condition="Exists('$(ProjectDir)docs\bridge_comparison.jpg')" />
+    <ZipDirectory SourceDirectory="$(PackageStageDir)" DestinationFile="$(PackageZipPath)" Overwrite="true" />
+    <Message Text="Created Gale/Thunderstore package: $(PackageZipPath)" Importance="high" />
+  </Target>
+
+  <!-- Fallback: only copy to Steam BepInEx folder if manual BepInEx is still installed in Steam -->
+  <Target Name="CopyToSteamBepInExPlugins" AfterTargets="Build" Condition="Exists('$(SteamBepInExPluginsDir)')">
+    <MakeDir Directories="$(SteamBepInExPluginsDir)\VikingTruss" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(SteamBepInExPluginsDir)\VikingTruss" SkipUnchangedFiles="false" />
+    <Message Text="Copied $(TargetFileName) to Steam folder: $(SteamBepInExPluginsDir)\VikingTruss" Importance="high" />
+  </Target>
+
+  <!-- One-step target to clean manual BepInEx installation out of the Steam Valheim directory -->
+  <Target Name="CleanSteamBepInEx">
+    <Copy SourceFiles="$(ValheimDir)\BepInEx\config\com.kinematiclogic.vikingtruss.cfg"
+          DestinationFolder="$(ProjectDir)"
+          Condition="Exists('$(ValheimDir)\BepInEx\config\com.kinematiclogic.vikingtruss.cfg')"
+          SkipUnchangedFiles="false" />
+    <RemoveDir Directories="$(ValheimDir)\BepInEx;$(ValheimDir)\doorstop_libs;$(ValheimDir)\unstripped_corlib" />
+    <Delete Files="$(ValheimDir)\winhttp.dll;$(ValheimDir)\doorstop_config.ini;$(ValheimDir)\changelog.txt;$(ValheimDir)\start_game_bepinex.sh;$(ValheimDir)\start_server_bepinex.sh" />
+    <Message Text="Cleaned manual BepInEx installation from $(ValheimDir) and backed up com.kinematiclogic.vikingtruss.cfg to project folder." Importance="high" />
+  </Target>
+
+</Project>

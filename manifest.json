@@ -1,0 +1,10 @@
+{
+  "name": "VikingTruss",
+  "author": "KinematicLogic",
+  "version_number": "1.0.0",
+  "website_url": "https://github.com/KinematicLogic/VikingTruss",
+  "description": "True structural engineering for Valheim: diagonal strut efficiency, closed-loop 3-piece and 4-piece truss triangle support bonuses, dynamic live-load collapses, and real-time audio/visual stress feedback.",
+  "dependencies": [
+    "denikson-BepInExPack_Valheim-5.4.2351"
+  ]
+}

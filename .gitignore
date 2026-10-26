@@ -1,0 +1,21 @@
+# Build artifacts
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.zip
+
+# Visual Studio / Rider / VSCode
+.vs/
+.idea/
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Unused scratch / draft files
+docs/*.png
+starter_code.txt
